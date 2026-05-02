@@ -40,13 +40,20 @@ class WeatherMarket:
     city_key: str
     city_name: str
     target_date: date
-    threshold_f: float       # Temperature threshold in Fahrenheit
+    threshold_f: float       # Temperature threshold in Fahrenheit, or midpoint for range bins
     metric: str              # "high" or "low"
-    direction: str           # "above" or "below"
+    direction: str           # "above", "below", or "range"
     yes_price: float         # Price of YES outcome (0-1)
     no_price: float          # Price of NO outcome (0-1)
+    lower_f: Optional[float] = None
+    upper_f: Optional[float] = None
     volume: float = 0.0
     closed: bool = False
+    condition_id: Optional[str] = None
+    yes_token_id: Optional[str] = None
+    no_token_id: Optional[str] = None
+    tick_size: Optional[float] = None
+    neg_risk: bool = False
 
 
 def _parse_weather_market_title(title: str) -> Optional[dict]:
@@ -79,23 +86,44 @@ def _parse_weather_market_title(title: str) -> Optional[dict]:
     if not city_key:
         return None
 
-    # Extract threshold temperature
-    temp_match = re.search(r'(\d+)\s*°?\s*f', title_lower)
-    if not temp_match:
-        temp_match = re.search(r'(\d+)\s*degrees', title_lower)
-    if not temp_match:
-        return None
-    threshold_f = float(temp_match.group(1))
-
     # Determine metric (high vs low)
     metric = "high"  # default
     if "low" in title_lower:
         metric = "low"
 
-    # Determine direction
-    direction = "above"  # default
-    if any(kw in title_lower for kw in ["below", "under", "less than", "drop below"]):
-        direction = "below"
+    lower_f = None
+    upper_f = None
+    threshold_f = None
+    direction = "above"
+
+    # Range/bin markets: "75-76°F", "between 75 and 76", "75 to 76 degrees".
+    range_patterns = [
+        r'(\d+)\s*(?:-|to)\s*(\d+)\s*°?\s*f',
+        r'between\s+(\d+)\s+(?:and|to)\s+(\d+)',
+    ]
+    for pattern in range_patterns:
+        match = re.search(pattern, title_lower)
+        if match:
+            lower_f = float(match.group(1))
+            upper_f = float(match.group(2))
+            threshold_f = (lower_f + upper_f) / 2.0
+            direction = "range"
+            break
+
+    if threshold_f is None:
+        temp_match = re.search(r'(\d+)\s*°?\s*f', title_lower)
+        if not temp_match:
+            temp_match = re.search(r'(\d+)\s*degrees', title_lower)
+        if not temp_match:
+            return None
+        threshold_f = float(temp_match.group(1))
+
+        if any(kw in title_lower for kw in ["below", "under", "less than", "drop below", "or lower", "or less"]):
+            direction = "below"
+            upper_f = threshold_f
+        elif any(kw in title_lower for kw in ["above", "over", "greater than", "exceed", "or higher", "or more"]):
+            direction = "above"
+            lower_f = threshold_f
 
     # Extract date
     target_date = _extract_date(title_lower)
@@ -106,6 +134,8 @@ def _parse_weather_market_title(title: str) -> Optional[dict]:
         "city_key": city_key,
         "city_name": city_name,
         "threshold_f": threshold_f,
+        "lower_f": lower_f,
+        "upper_f": upper_f,
         "metric": metric,
         "direction": direction,
         "target_date": target_date,
@@ -257,6 +287,7 @@ def _parse_polymarket_weather(
         return None
 
     volume = float(market_data.get("volume", 0) or 0)
+    token_ids = _parse_token_ids(market_data)
 
     return WeatherMarket(
         slug=event_slug,
@@ -267,9 +298,38 @@ def _parse_polymarket_weather(
         city_name=parsed["city_name"],
         target_date=parsed["target_date"],
         threshold_f=parsed["threshold_f"],
+        lower_f=parsed["lower_f"],
+        upper_f=parsed["upper_f"],
         metric=parsed["metric"],
         direction=parsed["direction"],
         yes_price=yes_price,
         no_price=no_price,
         volume=volume,
+        condition_id=market_data.get("conditionId") or market_data.get("condition_id"),
+        yes_token_id=token_ids[0] if len(token_ids) > 0 else None,
+        no_token_id=token_ids[1] if len(token_ids) > 1 else None,
+        tick_size=_parse_float(market_data.get("minimum_tick_size") or market_data.get("minimumTickSize")),
+        neg_risk=bool(market_data.get("negRisk") or market_data.get("neg_risk") or False),
     )
+
+
+def _parse_token_ids(market_data: dict) -> List[str]:
+    raw = market_data.get("clobTokenIds") or market_data.get("clobTokenIDs") or []
+    if isinstance(raw, str):
+        import json
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = []
+    if not isinstance(raw, list):
+        return []
+    return [str(token) for token in raw if token]
+
+
+def _parse_float(value) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

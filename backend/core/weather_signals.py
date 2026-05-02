@@ -5,7 +5,8 @@ from datetime import datetime
 from typing import List, Optional
 
 from backend.config import settings
-from backend.core.signals import calculate_edge, calculate_kelly_size
+from backend.core.signals import calculate_edge
+from backend.core.weather_strategy import size_weather_position
 from backend.data.weather import fetch_ensemble_forecast, EnsembleForecast, CITY_CONFIG
 from backend.data.weather_markets import WeatherMarket, fetch_polymarket_weather_markets
 from backend.models.database import SessionLocal, Signal
@@ -58,17 +59,7 @@ async def generate_weather_signal(market: WeatherMarket) -> Optional[WeatherTrad
     if not forecast or not forecast.member_highs:
         return None
 
-    # Calculate model probability based on market's question
-    if market.metric == "high":
-        if market.direction == "above":
-            model_yes_prob = forecast.probability_high_above(market.threshold_f)
-        else:
-            model_yes_prob = forecast.probability_high_below(market.threshold_f)
-    else:  # "low"
-        if market.direction == "above":
-            model_yes_prob = forecast.probability_low_above(market.threshold_f)
-        else:
-            model_yes_prob = forecast.probability_low_below(market.threshold_f)
+    model_yes_prob = _probability_for_market(forecast, market)
 
     # Clip extreme probabilities (ensemble can be unanimous but don't bet 100%)
     model_yes_prob = max(0.05, min(0.95, model_yes_prob))
@@ -81,7 +72,7 @@ async def generate_weather_signal(market: WeatherMarket) -> Optional[WeatherTrad
 
     # Entry price filter
     entry_price = market.yes_price if direction == "yes" else market.no_price
-    if entry_price > settings.WEATHER_MAX_ENTRY_PRICE:
+    if entry_price > settings.WEATHER_MAX_ENTRY_PRICE or entry_price < settings.WEATHER_MIN_ENTRY_PRICE:
         edge = 0.0  # Zero out but still return for UI visibility
 
     # Confidence = ensemble agreement (how one-sided the members are)
@@ -90,20 +81,19 @@ async def generate_weather_signal(market: WeatherMarket) -> Optional[WeatherTrad
     else:
         members = forecast.member_lows
 
-    above_count = sum(1 for m in members if m > market.threshold_f)
-    agreement_frac = max(above_count, len(members) - above_count) / len(members)
+    yes_count = _count_members_for_market(members, market)
+    agreement_frac = max(yes_count, len(members) - yes_count) / len(members)
     confidence = min(0.9, agreement_frac)
 
-    # Kelly sizing
+    # Kelly sizing. Suggested size is cash at risk, not shares.
     bankroll = settings.INITIAL_BANKROLL
-    suggested_size = calculate_kelly_size(
-        edge=abs(edge),
-        probability=model_yes_prob,
-        market_price=market_yes_prob,
-        direction=direction_raw,  # calculate_kelly_size expects "up"/"down"
+    sized = size_weather_position(
+        model_yes_probability=model_yes_prob,
+        entry_price=entry_price,
+        direction=direction,
         bankroll=bankroll,
     )
-    suggested_size = min(suggested_size, settings.WEATHER_MAX_TRADE_SIZE)
+    suggested_size = sized.cash if sized.can_trade else 0.0
 
     # Ensemble stats for display
     mean_val = forecast.mean_high if market.metric == "high" else forecast.mean_low
@@ -112,13 +102,17 @@ async def generate_weather_signal(market: WeatherMarket) -> Optional[WeatherTrad
     # Build reasoning
     filter_status = "ACTIONABLE" if abs(edge) >= settings.WEATHER_MIN_EDGE_THRESHOLD else "FILTERED"
     filter_notes = []
+    if entry_price < settings.WEATHER_MIN_ENTRY_PRICE:
+        filter_notes.append(f"entry {entry_price:.0%} < {settings.WEATHER_MIN_ENTRY_PRICE:.0%}")
     if entry_price > settings.WEATHER_MAX_ENTRY_PRICE:
         filter_notes.append(f"entry {entry_price:.0%} > {settings.WEATHER_MAX_ENTRY_PRICE:.0%}")
     filter_note = f" [{', '.join(filter_notes)}]" if filter_notes else ""
 
+    market_desc = _market_description(market)
+
     reasoning = (
         f"[{filter_status}]{filter_note} "
-        f"{market.city_name} {market.metric} {market.direction} {market.threshold_f:.0f}F on {market.target_date} | "
+        f"{market.city_name} {market_desc} on {market.target_date} | "
         f"Ensemble: {mean_val:.1f}F +/- {std_val:.1f}F ({forecast.num_members} members) | "
         f"Model YES: {model_yes_prob:.0%} vs Market: {market_yes_prob:.0%} | "
         f"Edge: {edge:+.1%} -> {direction.upper()} @ {entry_price:.0%} | "
@@ -132,7 +126,7 @@ async def generate_weather_signal(market: WeatherMarket) -> Optional[WeatherTrad
         edge=edge,
         direction=direction,
         confidence=confidence,
-        kelly_fraction=suggested_size / bankroll if bankroll > 0 else 0,
+        kelly_fraction=sized.kelly_fraction if sized.can_trade else 0.0,
         suggested_size=suggested_size,
         sources=[f"open_meteo_ensemble_{forecast.num_members}m"],
         reasoning=reasoning,
@@ -140,6 +134,29 @@ async def generate_weather_signal(market: WeatherMarket) -> Optional[WeatherTrad
         ensemble_std=std_val,
         ensemble_members=forecast.num_members,
     )
+
+
+def _probability_for_market(forecast: EnsembleForecast, market: WeatherMarket) -> float:
+    members = forecast.member_highs if market.metric == "high" else forecast.member_lows
+    if not members:
+        return 0.5
+    return _count_members_for_market(members, market) / len(members)
+
+
+def _count_members_for_market(members: List[float], market: WeatherMarket) -> int:
+    if market.direction == "range":
+        lower = market.lower_f if market.lower_f is not None else float("-inf")
+        upper = market.upper_f if market.upper_f is not None else float("inf")
+        return sum(1 for value in members if lower <= value <= upper)
+    if market.direction == "below":
+        return sum(1 for value in members if value < market.threshold_f)
+    return sum(1 for value in members if value > market.threshold_f)
+
+
+def _market_description(market: WeatherMarket) -> str:
+    if market.direction == "range" and market.lower_f is not None and market.upper_f is not None:
+        return f"{market.metric} in {market.lower_f:.0f}-{market.upper_f:.0f}F"
+    return f"{market.metric} {market.direction} {market.threshold_f:.0f}F"
 
 
 async def scan_for_weather_signals() -> List[WeatherTradingSignal]:
@@ -163,8 +180,8 @@ async def scan_for_weather_signals() -> List[WeatherTradingSignal]:
     except Exception as e:
         logger.error(f"Failed to fetch Polymarket weather markets: {e}")
 
-    # Kalshi
-    if settings.KALSHI_ENABLED:
+    # Kalshi is optional. The requested strategy is Polymarket-only by default.
+    if settings.KALSHI_ENABLED and not settings.WEATHER_POLYMARKET_ONLY:
         try:
             from backend.data.kalshi_client import kalshi_credentials_present
             from backend.data.kalshi_markets import fetch_kalshi_weather_markets

@@ -20,8 +20,8 @@ from backend.data.crypto import fetch_crypto_price, compute_btc_microstructure
 from pydantic import BaseModel
 
 app = FastAPI(
-    title="BTC 5-Min Trading Bot",
-    description="Polymarket BTC Up/Down 5-minute market trading bot",
+    title="Weather Prediction Market Trading Bot",
+    description="Weather-first Polymarket paper trading bot with BTC strategy optional",
     version="3.0.0"
 )
 
@@ -126,6 +126,10 @@ class TradeResponse(BaseModel):
     settled: bool
     result: str
     pnl: Optional[float]
+    quantity: Optional[float] = None
+    entry_cost: Optional[float] = None
+    exit_price: Optional[float] = None
+    exit_reason: Optional[str] = None
 
 
 class BotStats(BaseModel):
@@ -175,6 +179,8 @@ class WeatherMarketResponse(BaseModel):
     city_name: str
     target_date: str
     threshold_f: float
+    lower_f: Optional[float] = None
+    upper_f: Optional[float] = None
     metric: str
     direction: str
     yes_price: float
@@ -226,7 +232,7 @@ class EventResponse(BaseModel):
 @app.on_event("startup")
 async def startup():
     print("=" * 60)
-    print("BTC 5-MIN TRADING BOT v3.0")
+    print("WEATHER PREDICTION MARKET BOT v3.0")
     print("=" * 60)
     print("Initializing database...")
 
@@ -256,7 +262,8 @@ async def startup():
     print("")
     print("Configuration:")
     print(f"  - Simulation mode: {settings.SIMULATION_MODE}")
-    print(f"  - Min edge threshold: {settings.MIN_EDGE_THRESHOLD:.0%}")
+    print(f"  - Strategy mode: {settings.STRATEGY_MODE}")
+    print(f"  - Weather edge threshold: {settings.WEATHER_MIN_EDGE_THRESHOLD:.0%}")
     print(f"  - Kelly fraction: {settings.KELLY_FRACTION:.0%}")
     print(f"  - Scan interval: {settings.SCAN_INTERVAL_SECONDS}s")
     print(f"  - Settlement interval: {settings.SETTLEMENT_INTERVAL_SECONDS}s")
@@ -425,7 +432,11 @@ async def get_trades(
             timestamp=t.timestamp,
             settled=t.settled,
             result=t.result,
-            pnl=t.pnl
+            pnl=t.pnl,
+            quantity=t.quantity,
+            entry_cost=t.entry_cost,
+            exit_price=t.exit_price,
+            exit_reason=t.exit_reason,
         )
         for t in trades
     ]
@@ -475,6 +486,9 @@ async def simulate_trade(signal_ticker: str, db: Session = Depends(get_db)):
         direction=signal.direction,
         entry_price=entry_price,
         size=min(signal.suggested_size, state.bankroll * 0.05),
+        quantity=round(min(signal.suggested_size, state.bankroll * 0.05) / entry_price, 6) if entry_price > 0 else 0.0,
+        entry_cost=min(signal.suggested_size, state.bankroll * 0.05),
+        execution_mode="paper",
         model_probability=signal.model_probability,
         market_price_at_entry=signal.market_probability,
         edge_at_entry=signal.edge
@@ -486,6 +500,74 @@ async def simulate_trade(signal_ticker: str, db: Session = Depends(get_db)):
 
     log_event("trade", f"Manual BTC trade: {signal.direction.upper()} {signal.market.slug}")
     return {"status": "ok", "trade_id": trade.id, "size": trade.size}
+
+
+@app.post("/api/weather/simulate-trade")
+async def simulate_weather_trade(signal_ticker: str, db: Session = Depends(get_db)):
+    """Create one paper weather trade from the latest weather signal scan."""
+    from backend.core.scheduler import log_event
+    from backend.core.weather_signals import scan_for_weather_signals
+    from backend.core.weather_strategy import size_weather_position
+
+    signals = await scan_for_weather_signals()
+    signal = next((s for s in signals if s.market.market_id == signal_ticker), None)
+
+    if not signal:
+        raise HTTPException(status_code=404, detail="Weather signal not found")
+    if not signal.passes_threshold:
+        raise HTTPException(status_code=400, detail="Weather signal does not pass edge threshold")
+
+    state = db.query(BotState).first()
+    if not state:
+        raise HTTPException(status_code=500, detail="Bot state not initialized")
+
+    existing = db.query(Trade).filter(
+        Trade.market_ticker == signal.market.market_id,
+        Trade.settled == False,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Open paper trade already exists for this market")
+
+    entry_price = signal.market.yes_price if signal.direction == "yes" else signal.market.no_price
+    sized = size_weather_position(
+        model_yes_probability=signal.model_probability,
+        entry_price=entry_price,
+        direction=signal.direction,
+        bankroll=state.bankroll,
+    )
+    if not sized.can_trade:
+        raise HTTPException(status_code=400, detail=f"Cannot size trade: {sized.skipped_reason}")
+
+    asset_id = signal.market.yes_token_id if signal.direction == "yes" else signal.market.no_token_id
+    trade = Trade(
+        market_ticker=signal.market.market_id,
+        platform=signal.market.platform,
+        event_slug=signal.market.slug,
+        market_type="weather",
+        direction=signal.direction,
+        entry_price=entry_price,
+        size=sized.cash,
+        quantity=sized.quantity,
+        entry_cost=sized.cash,
+        asset_id=asset_id,
+        execution_mode="paper",
+        model_probability=signal.model_probability,
+        market_price_at_entry=signal.market_probability,
+        edge_at_entry=signal.edge,
+    )
+
+    db.add(trade)
+    state.total_trades += 1
+    db.commit()
+
+    log_event("trade", f"Manual WX paper trade: {signal.direction.upper()} ${sized.cash:.2f} @ {entry_price:.0%} | {signal.market.title}")
+    return {
+        "status": "ok",
+        "trade_id": trade.id,
+        "size": trade.size,
+        "quantity": trade.quantity,
+        "entry_price": trade.entry_price,
+    }
 
 
 @app.post("/api/run-scan")
@@ -500,8 +582,11 @@ async def run_scan(db: Session = Depends(get_db)):
     log_event("info", "Manual scan triggered (BTC + Weather)")
     await run_manual_scan()
 
-    signals = await scan_for_signals()
-    actionable = [s for s in signals if s.passes_threshold]
+    signals = []
+    actionable = []
+    if settings.STRATEGY_MODE in ("btc", "all"):
+        signals = await scan_for_signals()
+        actionable = [s for s in signals if s.passes_threshold]
 
     result = {
         "status": "ok",
@@ -511,7 +596,7 @@ async def run_scan(db: Session = Depends(get_db)):
     }
 
     # Also run weather scan if enabled
-    if settings.WEATHER_ENABLED:
+    if settings.WEATHER_ENABLED and settings.STRATEGY_MODE in ("weather", "all"):
         try:
             from backend.core.weather_signals import scan_for_weather_signals
             wx_signals = await scan_for_weather_signals()
@@ -527,18 +612,21 @@ async def run_scan(db: Session = Depends(get_db)):
 
 @app.post("/api/settle-trades")
 async def settle_trades_endpoint(db: Session = Depends(get_db)):
+    from backend.core.position_manager import manage_open_weather_positions
     from backend.core.settlement import settle_pending_trades, update_bot_state_with_settlements
     from backend.core.scheduler import log_event
 
     log_event("info", "Manual settlement triggered")
 
+    exited = await manage_open_weather_positions(db)
     settled = await settle_pending_trades(db)
     await update_bot_state_with_settlements(db, settled)
 
     return {
         "status": "ok",
+        "paper_exited_count": len(exited),
         "settled_count": len(settled),
-        "trades": [{"id": t.id, "result": t.result, "pnl": t.pnl} for t in settled]
+        "trades": [{"id": t.id, "result": t.result, "pnl": t.pnl, "exit_reason": t.exit_reason} for t in exited + settled]
     }
 
 
@@ -625,6 +713,14 @@ async def get_calibration(db: Session = Depends(get_db)):
     summary = _compute_calibration_summary(db)
 
     return {"buckets": buckets, "summary": summary}
+
+
+@app.get("/api/pnl-analysis")
+async def get_pnl_analysis(db: Session = Depends(get_db)):
+    """Return complete trade-by-trade PnL analysis."""
+    from backend.core.analytics import build_pnl_analysis
+
+    return build_pnl_analysis(db)
 
 
 # Kalshi endpoints
@@ -722,6 +818,8 @@ async def get_weather_markets():
                 city_name=m.city_name,
                 target_date=m.target_date.isoformat(),
                 threshold_f=m.threshold_f,
+                lower_f=m.lower_f,
+                upper_f=m.upper_f,
                 metric=m.metric,
                 direction=m.direction,
                 yes_price=m.yes_price,
@@ -828,7 +926,7 @@ async def reset_bot(db: Session = Depends(get_db)):
             state.total_trades = 0
             state.winning_trades = 0
             state.total_pnl = 0.0
-            state.is_running = True
+            state.is_running = False
 
         ai_logs_deleted = db.query(AILog).delete()
         db.commit()
@@ -852,78 +950,83 @@ async def get_dashboard(db: Session = Depends(get_db)):
     """Get all dashboard data in one call."""
     stats = await get_stats(db)
 
+    btc_enabled = settings.STRATEGY_MODE in ("btc", "all")
+
     # Fetch BTC price from microstructure first, fallback to CoinGecko
     btc_price_data = None
     micro_data = None
-    try:
-        micro = await compute_btc_microstructure()
-        if micro:
-            micro_data = MicrostructureResponse(
-                rsi=micro.rsi,
-                momentum_1m=micro.momentum_1m,
-                momentum_5m=micro.momentum_5m,
-                momentum_15m=micro.momentum_15m,
-                vwap_deviation=micro.vwap_deviation,
-                sma_crossover=micro.sma_crossover,
-                volatility=micro.volatility,
-                price=micro.price,
-                source=micro.source,
-            )
-            btc_price_data = BtcPriceResponse(
-                price=micro.price,
-                change_24h=micro.momentum_15m * 96,  # rough extrapolation
-                change_7d=0,
-                market_cap=0,
-                volume_24h=0,
-                last_updated=datetime.utcnow(),
-            )
-    except Exception:
-        pass
-    if not btc_price_data:
+    if btc_enabled:
         try:
-            btc = await fetch_crypto_price("BTC")
-            if btc:
+            micro = await compute_btc_microstructure()
+            if micro:
+                micro_data = MicrostructureResponse(
+                    rsi=micro.rsi,
+                    momentum_1m=micro.momentum_1m,
+                    momentum_5m=micro.momentum_5m,
+                    momentum_15m=micro.momentum_15m,
+                    vwap_deviation=micro.vwap_deviation,
+                    sma_crossover=micro.sma_crossover,
+                    volatility=micro.volatility,
+                    price=micro.price,
+                    source=micro.source,
+                )
                 btc_price_data = BtcPriceResponse(
-                    price=btc.current_price,
-                    change_24h=btc.change_24h,
-                    change_7d=btc.change_7d,
-                    market_cap=btc.market_cap,
-                    volume_24h=btc.volume_24h,
-                    last_updated=btc.last_updated
+                    price=micro.price,
+                    change_24h=micro.momentum_15m * 96,  # rough extrapolation
+                    change_7d=0,
+                    market_cap=0,
+                    volume_24h=0,
+                    last_updated=datetime.utcnow(),
                 )
         except Exception:
             pass
+        if not btc_price_data:
+            try:
+                btc = await fetch_crypto_price("BTC")
+                if btc:
+                    btc_price_data = BtcPriceResponse(
+                        price=btc.current_price,
+                        change_24h=btc.change_24h,
+                        change_7d=btc.change_7d,
+                        market_cap=btc.market_cap,
+                        volume_24h=btc.volume_24h,
+                        last_updated=btc.last_updated
+                    )
+            except Exception:
+                pass
 
     # Fetch windows
     windows = []
-    try:
-        markets = await fetch_active_btc_markets()
-        windows = [
-            BtcWindowResponse(
-                slug=m.slug,
-                market_id=m.market_id,
-                up_price=m.up_price,
-                down_price=m.down_price,
-                window_start=m.window_start,
-                window_end=m.window_end,
-                volume=m.volume,
-                is_active=m.is_active,
-                is_upcoming=m.is_upcoming,
-                time_until_end=m.time_until_end,
-                spread=m.spread,
-            )
-            for m in markets
-        ]
-    except Exception:
-        pass
+    if btc_enabled:
+        try:
+            markets = await fetch_active_btc_markets()
+            windows = [
+                BtcWindowResponse(
+                    slug=m.slug,
+                    market_id=m.market_id,
+                    up_price=m.up_price,
+                    down_price=m.down_price,
+                    window_start=m.window_start,
+                    window_end=m.window_end,
+                    volume=m.volume,
+                    is_active=m.is_active,
+                    is_upcoming=m.is_upcoming,
+                    time_until_end=m.time_until_end,
+                    spread=m.spread,
+                )
+                for m in markets
+            ]
+        except Exception:
+            pass
 
     # Signals — return ALL signals, mark which are actionable
     signals = []
-    try:
-        raw_signals = await scan_for_signals()
-        signals = [_signal_to_response(s, actionable=s.passes_threshold) for s in raw_signals]
-    except Exception:
-        pass
+    if btc_enabled:
+        try:
+            raw_signals = await scan_for_signals()
+            signals = [_signal_to_response(s, actionable=s.passes_threshold) for s in raw_signals]
+        except Exception:
+            pass
 
     # Recent trades
     trades = db.query(Trade).order_by(Trade.timestamp.desc()).limit(50).all()
@@ -939,7 +1042,11 @@ async def get_dashboard(db: Session = Depends(get_db)):
             timestamp=t.timestamp,
             settled=t.settled,
             result=t.result,
-            pnl=t.pnl
+            pnl=t.pnl,
+            quantity=t.quantity,
+            entry_cost=t.entry_cost,
+            exit_price=t.exit_price,
+            exit_reason=t.exit_reason,
         )
         for t in trades
     ]

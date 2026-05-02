@@ -10,6 +10,7 @@ import logging
 from backend.config import settings
 from backend.models.database import SessionLocal, Trade, BotState, Signal
 from backend.core.signals import scan_for_signals
+from backend.core.weather_strategy import size_weather_position
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("trading_bot")
@@ -135,6 +136,9 @@ async def scan_and_trade_job():
                     direction=signal.direction,
                     entry_price=entry_price,
                     size=trade_size,
+                    quantity=round(trade_size / entry_price, 6) if entry_price > 0 else 0.0,
+                    entry_cost=trade_size,
+                    execution_mode="paper" if settings.SIMULATION_MODE else "real",
                     model_probability=signal.model_probability,
                     market_price_at_entry=signal.market_probability,
                     edge_at_entry=signal.edge
@@ -216,12 +220,12 @@ async def weather_scan_and_trade_job():
                 log_event("info", "Bot is paused, skipping weather trades")
                 return
 
-            MAX_TRADES_PER_SCAN = 3
-            MIN_TRADE_SIZE = 10
-            MAX_WEATHER_ALLOCATION = 500.0  # Max total exposure to weather markets
+            MAX_TRADES_PER_SCAN = settings.WEATHER_MAX_OPEN_TRADES
+            MIN_TRADE_SIZE = settings.WEATHER_MIN_TRADE_SIZE
+            MAX_WEATHER_ALLOCATION = settings.WEATHER_MAX_ALLOCATION
 
             # Check weather allocation limit
-            weather_pending = db.query(func.coalesce(func.sum(Trade.size), 0.0)).filter(
+            weather_pending = db.query(func.coalesce(func.sum(Trade.entry_cost), 0.0)).filter(
                 Trade.settled == False,
                 Trade.market_type == "weather",
             ).scalar()
@@ -241,8 +245,19 @@ async def weather_scan_and_trade_job():
                 if existing:
                     continue
 
-                trade_size = min(signal.suggested_size, settings.WEATHER_MAX_TRADE_SIZE)
-                trade_size = max(trade_size, MIN_TRADE_SIZE)
+                entry_price = signal.market.yes_price if signal.direction == "yes" else signal.market.no_price
+                sized = size_weather_position(
+                    model_yes_probability=signal.model_probability,
+                    entry_price=entry_price,
+                    direction=signal.direction,
+                    bankroll=state.bankroll,
+                )
+
+                if not sized.can_trade:
+                    log_event("info", f"Weather signal skipped: {sized.skipped_reason} | {signal.market.title}")
+                    continue
+
+                trade_size = sized.cash
 
                 if state.bankroll < MIN_TRADE_SIZE:
                     log_event("warning", f"Bankroll too low: ${state.bankroll:.2f}")
@@ -251,19 +266,53 @@ async def weather_scan_and_trade_job():
                 if trades_executed >= MAX_TRADES_PER_SCAN:
                     break
 
-                entry_price = signal.market.yes_price if signal.direction == "yes" else signal.market.no_price
+                asset_id = signal.market.yes_token_id if signal.direction == "yes" else signal.market.no_token_id
+                execution_mode = "paper"
+                entry_order_id = None
+                if not settings.SIMULATION_MODE:
+                    if not settings.REAL_TRADING_ENABLED:
+                        log_event("warning", "SIMULATION_MODE=false but REAL_TRADING_ENABLED=false; skipping real weather order")
+                        continue
+                    try:
+                        from backend.execution.polymarket_executor import PolymarketExecutor
+
+                        executor = PolymarketExecutor()
+                        result = await executor.buy_limit(
+                            token_id=asset_id or "",
+                            price=entry_price,
+                            quantity=sized.quantity,
+                            tick_size=signal.market.tick_size or 0.01,
+                            neg_risk=signal.market.neg_risk,
+                        )
+                        execution_mode = "real"
+                        entry_order_id = result.order_id
+                        if result.status.lower() != "matched":
+                            log_event("warning", f"Real weather order not filled: status={result.status}")
+                            continue
+                    except Exception as exc:
+                        log_event("warning", f"Real weather order skipped: {exc}")
+                        continue
 
                 trade = Trade(
                     market_ticker=signal.market.market_id,
-                    platform="polymarket",
+                    platform=signal.market.platform,
                     event_slug=signal.market.slug,
                     market_type="weather",
                     direction=signal.direction,
                     entry_price=entry_price,
                     size=trade_size,
+                    quantity=sized.quantity,
+                    entry_cost=trade_size,
+                    asset_id=asset_id,
+                    execution_mode=execution_mode,
+                    entry_order_id=entry_order_id,
                     model_probability=signal.model_probability,
                     market_price_at_entry=signal.market_probability,
                     edge_at_entry=signal.edge,
+                    analysis={
+                        "tick_size": signal.market.tick_size or 0.01,
+                        "neg_risk": signal.market.neg_risk,
+                    },
                 )
 
                 db.add(trade)
@@ -284,12 +333,13 @@ async def weather_scan_and_trade_job():
 
                 log_event("trade",
                     f"WX {signal.market.city_name}: {signal.direction.upper()} "
-                    f"${trade_size:.0f} @ {entry_price:.0%} | "
+                    f"${trade_size:.2f} @ {entry_price:.0%} | "
                     f"{signal.market.metric} {signal.market.direction} {signal.market.threshold_f:.0f}F",
                     {
                         "slug": signal.market.slug,
                         "direction": signal.direction,
                         "size": trade_size,
+                        "quantity": sized.quantity,
                         "edge": signal.edge,
                         "entry_price": entry_price,
                         "city": signal.market.city_name,
@@ -320,6 +370,7 @@ async def settlement_job():
     log_event("info", "Checking BTC trade settlements...")
 
     try:
+        from backend.core.position_manager import manage_open_weather_positions
         from backend.core.settlement import settle_pending_trades, update_bot_state_with_settlements
 
         db = SessionLocal()
@@ -331,6 +382,13 @@ async def settlement_job():
                 return
 
             log_event("data", f"Processing {pending_count} pending trades")
+
+            exited = await manage_open_weather_positions(db)
+            if exited:
+                wins = sum(1 for t in exited if t.pnl and t.pnl > 0)
+                losses = sum(1 for t in exited if t.pnl and t.pnl < 0)
+                total_pnl = sum(t.pnl for t in exited if t.pnl is not None)
+                log_event("success", f"Closed {len(exited)} paper weather position(s): {wins}W/{losses}L, P&L: ${total_pnl:+.2f}")
 
             settled = await settle_pending_trades(db)
 
@@ -397,16 +455,20 @@ def start_scheduler():
     scheduler = AsyncIOScheduler()
 
     scan_seconds = settings.SCAN_INTERVAL_SECONDS
-    settle_seconds = settings.SETTLEMENT_INTERVAL_SECONDS
+    settle_seconds = min(settings.SETTLEMENT_INTERVAL_SECONDS, settings.WEATHER_EXIT_CHECK_INTERVAL_SECONDS)
 
-    # Scan BTC markets every minute
-    scheduler.add_job(
-        scan_and_trade_job,
-        IntervalTrigger(seconds=scan_seconds),
-        id="market_scan",
-        replace_existing=True,
-        max_instances=1
-    )
+    run_btc = settings.STRATEGY_MODE in ("btc", "all")
+    run_weather = settings.WEATHER_ENABLED and settings.STRATEGY_MODE in ("weather", "all")
+
+    # Scan BTC markets every minute when enabled
+    if run_btc:
+        scheduler.add_job(
+            scan_and_trade_job,
+            IntervalTrigger(seconds=scan_seconds),
+            id="market_scan",
+            replace_existing=True,
+            max_instances=1
+        )
 
     # Check settlements every 2 minutes
     scheduler.add_job(
@@ -427,9 +489,8 @@ def start_scheduler():
     )
 
     # Weather trading jobs (gated by WEATHER_ENABLED)
-    if settings.WEATHER_ENABLED:
+    if run_weather:
         weather_scan_seconds = settings.WEATHER_SCAN_INTERVAL_SECONDS
-        weather_settle_seconds = settings.WEATHER_SETTLEMENT_INTERVAL_SECONDS
 
         scheduler.add_job(
             weather_scan_and_trade_job,
@@ -440,16 +501,18 @@ def start_scheduler():
         )
 
     scheduler.start()
-    log_event("success", "BTC 5-min trading scheduler started", {
+    log_event("success", "Trading scheduler started", {
         "scan_interval": f"{scan_seconds}s",
         "settlement_interval": f"{settle_seconds}s",
         "min_edge": f"{settings.MIN_EDGE_THRESHOLD:.0%}",
-        "weather_enabled": settings.WEATHER_ENABLED,
+        "strategy_mode": settings.STRATEGY_MODE,
+        "weather_enabled": run_weather,
     })
 
-    asyncio.create_task(scan_and_trade_job())
+    if run_btc:
+        asyncio.create_task(scan_and_trade_job())
 
-    if settings.WEATHER_ENABLED:
+    if run_weather:
         asyncio.create_task(weather_scan_and_trade_job())
 
 
@@ -474,7 +537,10 @@ def is_scheduler_running() -> bool:
 async def run_manual_scan():
     """Trigger a manual market scan."""
     log_event("info", "Manual scan triggered")
-    await scan_and_trade_job()
+    if settings.STRATEGY_MODE in ("btc", "all"):
+        await scan_and_trade_job()
+    if settings.WEATHER_ENABLED and settings.STRATEGY_MODE in ("weather", "all"):
+        await weather_scan_and_trade_job()
 
 
 async def run_manual_settlement():

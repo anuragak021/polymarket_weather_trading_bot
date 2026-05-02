@@ -13,8 +13,10 @@ A multi-strategy trading bot that identifies pricing inefficiencies in predictio
 ### Strategy 1: BTC 5-Minute Up/Down
 Scans Polymarket BTC 5-minute Up/Down markets every 60 seconds. Uses real-time 1-minute candle data from Coinbase/Kraken/Binance to compute RSI, momentum, VWAP deviation, SMA crossover, and market skew as a weighted composite signal. Trades when edge > 2%.
 
-### Strategy 2: Weather Temperature (Kalshi + Polymarket)
-Scans weather temperature markets on **Kalshi** (KXHIGH series) and **Polymarket** every 5 minutes. Uses 31-member GFS ensemble forecasts from Open-Meteo to estimate the probability of temperature thresholds being exceeded. Trades when edge > 8%. Kalshi markets are auto-discovered via the `KXHIGHNY`, `KXHIGHCHI`, `KXHIGHMIA`, `KXHIGHLAX`, `KXHIGHDEN` series tickers.
+### Strategy 2: Weather Temperature (Polymarket-first)
+Scans weather temperature markets on **Polymarket** every 5 minutes by default. Uses 31-member GFS ensemble forecasts from Open-Meteo to estimate the probability of temperature thresholds or bins. Trades when edge > 10pp. Kalshi support remains in the repo but is disabled by default for this strategy fork.
+
+For the tiny-bankroll Polymarket weather strategy requested in this fork, read [STRATEGY_RUNBOOK.md](STRATEGY_RUNBOOK.md). It documents the `$3` paper bankroll, `$0.50` paper trade sizing, intraday exits at `$0.75`, backtesting, PnL analysis, and real-trading safety gates.
 
 ### Key Features
 

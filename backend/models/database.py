@@ -31,7 +31,12 @@ class Trade(Base):
     # Trade details
     direction = Column(String)  # "up" or "down"
     entry_price = Column(Float)
-    size = Column(Float)
+    size = Column(Float)  # Dollars spent / cash at risk.
+    quantity = Column(Float, nullable=True)  # Outcome shares/contracts bought.
+    entry_cost = Column(Float, nullable=True)
+    asset_id = Column(String, nullable=True)
+    execution_mode = Column(String, default="paper")  # paper or real
+    entry_order_id = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     # Settlement
@@ -40,6 +45,10 @@ class Trade(Base):
     settlement_value = Column(Float, nullable=True)  # 1.0=Up won, 0.0=Down won
     result = Column(String, default="pending")  # pending, win, loss
     pnl = Column(Float, nullable=True)
+    exit_price = Column(Float, nullable=True)
+    exit_reason = Column(String, nullable=True)
+    exit_order_id = Column(String, nullable=True)
+    analysis = Column(JSON, nullable=True)
 
     # Model performance tracking
     model_probability = Column(Float)
@@ -173,6 +182,25 @@ def ensure_schema():
         with engine.connect() as conn:
             with conn.begin():
                 conn.execute(text("ALTER TABLE trades ADD COLUMN market_type VARCHAR DEFAULT 'btc'"))
+
+    with engine.connect() as conn:
+        for col, coltype in [
+            ("quantity", "FLOAT"),
+            ("entry_cost", "FLOAT"),
+            ("asset_id", "VARCHAR"),
+            ("execution_mode", "VARCHAR DEFAULT 'paper'"),
+            ("entry_order_id", "VARCHAR"),
+            ("exit_price", "FLOAT"),
+            ("exit_reason", "VARCHAR"),
+            ("exit_order_id", "VARCHAR"),
+            ("analysis", "JSON"),
+        ]:
+            if col not in columns:
+                try:
+                    with conn.begin():
+                        conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col} {coltype}"))
+                except Exception:
+                    pass
 
     # Add calibration columns to signals table
     try:

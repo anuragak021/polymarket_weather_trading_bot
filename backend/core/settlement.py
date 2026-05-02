@@ -7,6 +7,7 @@ from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
 
 from backend.models.database import Trade, BotState, Signal
+from backend.core.weather_strategy import calculate_settlement_pnl_from_cash
 
 logger = logging.getLogger("trading_bot")
 
@@ -130,25 +131,7 @@ def calculate_pnl(trade: Trade, settlement_value: float) -> float:
     - UP position wins when settlement = 1.0
     - DOWN position wins when settlement = 0.0
     """
-    # Map up/down to yes/no logic
-    direction = trade.direction
-    if direction == "up":
-        direction = "yes"
-    elif direction == "down":
-        direction = "no"
-
-    if direction == "yes":
-        if settlement_value == 1.0:
-            pnl = trade.size * (1.0 - trade.entry_price)
-        else:
-            pnl = -trade.size * trade.entry_price
-    else:  # NO / DOWN position
-        if settlement_value == 0.0:
-            pnl = trade.size * (1.0 - trade.entry_price)
-        else:
-            pnl = -trade.size * trade.entry_price
-
-    return round(pnl, 2)
+    return calculate_settlement_pnl_from_cash(trade, settlement_value)
 
 
 async def check_market_settlement(trade: Trade) -> Tuple[bool, Optional[float], Optional[float]]:

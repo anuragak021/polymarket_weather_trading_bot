@@ -1,0 +1,91 @@
+{
+  "data_source": "deterministic_demo_data",
+  "rows": 1200,
+  "trades": 108,
+  "config": {
+    "initial_bankroll": 3.0,
+    "edge_threshold": 0.1,
+    "kelly_fraction": 0.25,
+    "min_entry_price": 0.4,
+    "max_entry_price": 0.6,
+    "min_trade_size": 0.5,
+    "max_trade_size": 0.5,
+    "max_trade_fraction": 0.2,
+    "allow_min_size_round_up": true,
+    "take_profit_price": 0.75,
+    "stop_loss_price": 0.35,
+    "exit_slippage": 0.01,
+    "conservative_intraday_order": true
+  },
+  "metrics": {
+    "total_pnl": 13.6517,
+    "roi": 4.5506,
+    "win_rate": 0.5185,
+    "trade_count": 108,
+    "avg_pnl": 0.1264,
+    "sharpe": 6.5824,
+    "sortino": 14.6701,
+    "calmar": 32.7218,
+    "max_drawdown": -1.1813,
+    "brier_score": 0.1888
+  },
+  "train_test": {
+    "train_first_160_days": {
+      "total_pnl": 8.8381,
+      "roi": 2.946,
+      "win_rate": 0.507,
+      "trade_count": 71,
+      "avg_pnl": 0.1245,
+      "sharpe": 7.3237,
+      "sortino": 17.2684,
+      "calmar": 43.3067,
+      "max_drawdown": -0.8867,
+      "brier_score": 0.1814
+    },
+    "test_last_80_days": {
+      "total_pnl": 4.8136,
+      "roi": 1.6045,
+      "win_rate": 0.5405,
+      "trade_count": 37,
+      "avg_pnl": 0.1301,
+      "sharpe": 5.5946,
+      "sortino": 13.3458,
+      "calmar": 34.9749,
+      "max_drawdown": -1.1188,
+      "brier_score": 0.2031
+    }
+  },
+  "baselines": {
+    "market": {
+      "brier_score": 0.143,
+      "log_loss": 0.4477
+    },
+    "arima_proxy": {
+      "brier_score": 0.1531,
+      "log_loss": 0.4733
+    },
+    "xgboost_proxy": {
+      "brier_score": 0.1428,
+      "log_loss": 0.4458
+    },
+    "ensemble_proxy": {
+      "brier_score": 0.1449,
+      "log_loss": 0.453
+    },
+    "strategy_model": {
+      "brier_score": 0.138,
+      "log_loss": 0.4358
+    }
+  },
+  "charts": {
+    "equity_curve": "artifacts/weather_strategy/equity_curve.png",
+    "drawdown": "artifacts/weather_strategy/drawdown.png",
+    "edge_histogram": "artifacts/weather_strategy/edge_histogram.png",
+    "calibration": "artifacts/weather_strategy/calibration.png",
+    "sensitivity_heatmap": "artifacts/weather_strategy/sensitivity_heatmap.png",
+    "candidate_edge_histogram": "artifacts/weather_strategy/candidate_edge_histogram.png"
+  },
+  "trade_ledger": "artifacts/weather_strategy/trades.csv",
+  "daily_equity": "artifacts/weather_strategy/daily_equity.csv",
+  "sensitivity": "artifacts/weather_strategy/sensitivity.csv"
+}

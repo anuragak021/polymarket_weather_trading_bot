@@ -1,4 +1,4 @@
-"""Configuration settings for the BTC 5-min trading bot."""
+"""Configuration settings for the prediction-market trading bot."""
 import os
 from pydantic_settings import BaseSettings
 from typing import Optional
@@ -12,6 +12,18 @@ class Settings(BaseSettings):
 
     # API Keys (optional)
     POLYMARKET_API_KEY: Optional[str] = None
+
+    # Polymarket execution. Keep real trading disabled unless explicitly enabled.
+    REAL_TRADING_ENABLED: bool = False
+    POLYMARKET_CLOB_HOST: str = "https://clob.polymarket.com"
+    POLYMARKET_CHAIN_ID: int = 137
+    POLYMARKET_PRIVATE_KEY: Optional[str] = None
+    POLYMARKET_API_SECRET: Optional[str] = None
+    POLYMARKET_API_PASSPHRASE: Optional[str] = None
+    POLYMARKET_SIGNATURE_TYPE: int = 0
+    POLYMARKET_FUNDER_ADDRESS: Optional[str] = None
+    POLYMARKET_CHECK_GEOBLOCK: bool = True
+    POLYMARKET_MIN_ORDER_SIZE: float = 5.0  # CLOB minimum is in shares, not dollars.
 
     # Kalshi API
     KALSHI_API_KEY_ID: Optional[str] = None
@@ -28,10 +40,11 @@ class Settings(BaseSettings):
     AI_LOG_ALL_CALLS: bool = True
     AI_DAILY_BUDGET_USD: float = 1.0
 
-    # Bot settings - BTC 5-MIN TRADING
+    # Bot settings
+    STRATEGY_MODE: str = "weather"  # weather, btc, or all
     SIMULATION_MODE: bool = True
-    INITIAL_BANKROLL: float = 10000.0
-    KELLY_FRACTION: float = 0.15  # Fractional Kelly
+    INITIAL_BANKROLL: float = 3.0
+    KELLY_FRACTION: float = 0.25  # Fractional Kelly
 
     # BTC 5-min specific settings
     SCAN_INTERVAL_SECONDS: int = 60  # Scan every minute
@@ -43,7 +56,7 @@ class Settings(BaseSettings):
     MAX_TOTAL_PENDING_TRADES: int = 20
 
     # Risk management
-    DAILY_LOSS_LIMIT: float = 300.0
+    DAILY_LOSS_LIMIT: float = 1.50
     MAX_TRADE_SIZE: float = 75.0
     MIN_TIME_REMAINING: int = 60  # Don't trade windows closing in < 60s
     MAX_TIME_REMAINING: int = 1800  # Trade windows up to 30min out
@@ -60,11 +73,22 @@ class Settings(BaseSettings):
 
     # Weather trading settings
     WEATHER_ENABLED: bool = True
+    WEATHER_POLYMARKET_ONLY: bool = True
     WEATHER_SCAN_INTERVAL_SECONDS: int = 300  # 5 min
     WEATHER_SETTLEMENT_INTERVAL_SECONDS: int = 1800  # 30 min
-    WEATHER_MIN_EDGE_THRESHOLD: float = 0.08  # 8% — weather has more signal than 5-min BTC
-    WEATHER_MAX_ENTRY_PRICE: float = 0.70
-    WEATHER_MAX_TRADE_SIZE: float = 100.0
+    WEATHER_EXIT_CHECK_INTERVAL_SECONDS: int = 60
+    WEATHER_MIN_EDGE_THRESHOLD: float = 0.10  # 10pp edge from strat3.md
+    WEATHER_MIN_ENTRY_PRICE: float = 0.40
+    WEATHER_MAX_ENTRY_PRICE: float = 0.60
+    WEATHER_MIN_TRADE_SIZE: float = 0.50
+    WEATHER_MAX_TRADE_SIZE: float = 0.50
+    WEATHER_MAX_TRADE_FRACTION: float = 0.20
+    WEATHER_ALLOW_MIN_SIZE_ROUND_UP: bool = True
+    WEATHER_MAX_OPEN_TRADES: int = 4
+    WEATHER_MAX_ALLOCATION: float = 3.0
+    WEATHER_TAKE_PROFIT_PRICE: float = 0.75
+    WEATHER_STOP_LOSS_PRICE: float = 0.35
+    WEATHER_EXIT_SLIPPAGE: float = 0.01
     WEATHER_CITIES: str = "nyc,chicago,miami,los_angeles,denver"
 
     class Config:

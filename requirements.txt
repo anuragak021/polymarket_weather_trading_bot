@@ -13,10 +13,14 @@ aiohttp==3.9.1
 # Kalshi API auth (RSA-PSS signatures)
 cryptography>=42.0.0
 
+# Optional real Polymarket CLOB execution
+py-clob-client>=0.34.0
+
 # Weather data (using Open-Meteo API)
 numpy==1.26.3
 pandas==2.1.4
 scipy==1.12.0
+matplotlib==3.8.2
 
 # Scheduling
 apscheduler==3.10.4
