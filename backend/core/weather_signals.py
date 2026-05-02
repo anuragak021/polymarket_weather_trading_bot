@@ -13,6 +13,15 @@ from backend.models.database import SessionLocal, Signal
 
 logger = logging.getLogger("trading_bot")
 
+# Most recent scan output, populated by the scheduler. The dashboard reads this
+# instead of re-running scan_for_weather_signals on every poll.
+_latest_signals: List["WeatherTradingSignal"] = []
+
+
+def latest_weather_signals() -> List["WeatherTradingSignal"]:
+    """Return the most recent set of weather signals from the background scan."""
+    return list(_latest_signals)
+
 
 @dataclass
 class WeatherTradingSignal:
@@ -214,6 +223,10 @@ async def scan_for_weather_signals() -> List[WeatherTradingSignal]:
 
     # Persist signals to DB
     _persist_weather_signals(signals)
+
+    # Cache for dashboard reads
+    global _latest_signals
+    _latest_signals = signals
 
     return signals
 

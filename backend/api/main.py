@@ -1072,22 +1072,23 @@ async def get_dashboard(db: Session = Depends(get_db)):
     # Calibration summary
     calibration = _compute_calibration_summary(db)
 
-    # Weather data (if enabled)
+    # Weather data (if enabled). Use the cached snapshot from the background
+    # scheduler so the dashboard poll does not trigger 51 Open-Meteo requests.
     weather_signals_data = []
     weather_forecasts_data = []
     if settings.WEATHER_ENABLED:
         try:
-            from backend.core.weather_signals import scan_for_weather_signals
-            from backend.data.weather import fetch_ensemble_forecast, CITY_CONFIG
+            from backend.core.weather_signals import latest_weather_signals
+            from backend.data.weather import get_cached_forecast, CITY_CONFIG
 
-            wx_signals = await scan_for_weather_signals()
+            wx_signals = latest_weather_signals()
             weather_signals_data = [_weather_signal_to_response(s) for s in wx_signals]
 
             city_keys = [c.strip() for c in settings.WEATHER_CITIES.split(",") if c.strip()]
             for city_key in city_keys:
                 if city_key not in CITY_CONFIG:
                     continue
-                forecast = await fetch_ensemble_forecast(city_key)
+                forecast = get_cached_forecast(city_key)
                 if forecast:
                     city_meta = CITY_CONFIG.get(city_key, {})
                     weather_forecasts_data.append(WeatherForecastResponse(

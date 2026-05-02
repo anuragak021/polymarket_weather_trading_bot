@@ -1,4 +1,5 @@
 """Weather data fetcher using Open-Meteo Ensemble API and NWS observations."""
+import asyncio
 import httpx
 import logging
 from dataclasses import dataclass, field
@@ -8,6 +9,9 @@ import statistics
 import time
 
 logger = logging.getLogger("trading_bot")
+
+# Cap concurrent Open-Meteo ensemble requests to stay below the public free-tier limits.
+_ENSEMBLE_SEMAPHORE = asyncio.Semaphore(3)
 
 # City configurations with lat/lon and NWS station identifiers
 CITY_CONFIG: Dict[str, dict] = {
@@ -481,7 +485,20 @@ class EnsembleForecast:
 
 # Simple cache: (city_key, target_date_str) -> (timestamp, EnsembleForecast)
 _forecast_cache: Dict[str, tuple] = {}
-_CACHE_TTL = 900  # 15 minutes
+_CACHE_TTL = 1800  # 30 minutes between refresh attempts on success
+_NEGATIVE_CACHE_TTL = 120  # back off 2 minutes after a 429/error before retrying
+
+
+def get_cached_forecast(city_key: str, target_date: Optional[date] = None) -> Optional["EnsembleForecast"]:
+    """Return the most recent cached forecast for a city without triggering a fetch."""
+    if target_date is None:
+        target_date = date.today()
+    cache_key = f"{city_key}_{target_date.isoformat()}"
+    entry = _forecast_cache.get(cache_key)
+    if not entry:
+        return None
+    _, cached_forecast = entry
+    return cached_forecast
 
 
 def _celsius_to_fahrenheit(c: float) -> float:
@@ -502,74 +519,93 @@ async def fetch_ensemble_forecast(city_key: str, target_date: Optional[date] = N
 
     cache_key = f"{city_key}_{target_date.isoformat()}"
     now = time.time()
-    if cache_key in _forecast_cache:
-        cached_time, cached_forecast = _forecast_cache[cache_key]
-        if now - cached_time < _CACHE_TTL:
+    cached_entry = _forecast_cache.get(cache_key)
+    if cached_entry is not None:
+        cached_time, cached_forecast = cached_entry
+        if cached_forecast is not None and now - cached_time < _CACHE_TTL:
             return cached_forecast
+        # Negative cache: a recent failure (cached_forecast is None). Skip the call.
+        if cached_forecast is None and now - cached_time < _NEGATIVE_CACHE_TTL:
+            return None
 
     city = CITY_CONFIG[city_key]
+    last_known: Optional[EnsembleForecast] = None
+    if cached_entry is not None and cached_entry[1] is not None:
+        last_known = cached_entry[1]
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # Open-Meteo Ensemble API — GFS ensemble with 31 members
-            params = {
-                "latitude": city["lat"],
-                "longitude": city["lon"],
-                "daily": "temperature_2m_max,temperature_2m_min",
-                "temperature_unit": "fahrenheit",
-                "start_date": target_date.isoformat(),
-                "end_date": target_date.isoformat(),
-                "models": "gfs_seamless",
-            }
+        async with _ENSEMBLE_SEMAPHORE:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # Open-Meteo Ensemble API — GFS ensemble with 31 members
+                params = {
+                    "latitude": city["lat"],
+                    "longitude": city["lon"],
+                    "daily": "temperature_2m_max,temperature_2m_min",
+                    "temperature_unit": "fahrenheit",
+                    "start_date": target_date.isoformat(),
+                    "end_date": target_date.isoformat(),
+                    "models": "gfs_seamless",
+                }
 
-            response = await client.get(
-                "https://ensemble-api.open-meteo.com/v1/ensemble",
-                params=params,
-            )
-            response.raise_for_status()
-            data = response.json()
+                response = await client.get(
+                    "https://ensemble-api.open-meteo.com/v1/ensemble",
+                    params=params,
+                )
+                response.raise_for_status()
+                data = response.json()
 
-            daily = data.get("daily", {})
+        daily = data.get("daily", {})
 
-            # Open-Meteo returns each ensemble member as a separate key:
-            #   temperature_2m_max (control), temperature_2m_max_member01, ..., _member30
-            # Collect all member values for highs and lows
-            member_highs = []
-            member_lows = []
+        # Open-Meteo returns each ensemble member as a separate key:
+        #   temperature_2m_max (control), temperature_2m_max_member01, ..., _member30
+        # Collect all member values for highs and lows
+        member_highs = []
+        member_lows = []
 
-            for key, values in daily.items():
-                if not isinstance(values, list) or not values:
-                    continue
-                val = values[0]
-                if val is None:
-                    continue
-                if "temperature_2m_max" in key:
-                    member_highs.append(float(val))
-                elif "temperature_2m_min" in key:
-                    member_lows.append(float(val))
+        for key, values in daily.items():
+            if not isinstance(values, list) or not values:
+                continue
+            val = values[0]
+            if val is None:
+                continue
+            if "temperature_2m_max" in key:
+                member_highs.append(float(val))
+            elif "temperature_2m_min" in key:
+                member_lows.append(float(val))
 
-            if not member_highs:
-                logger.warning(f"No ensemble data for {city_key} on {target_date}")
-                return None
+        if not member_highs:
+            logger.warning(f"No ensemble data for {city_key} on {target_date}")
+            return last_known
 
-            forecast = EnsembleForecast(
-                city_key=city_key,
-                city_name=city["name"],
-                target_date=target_date,
-                member_highs=member_highs,
-                member_lows=member_lows,
-            )
+        forecast = EnsembleForecast(
+            city_key=city_key,
+            city_name=city["name"],
+            target_date=target_date,
+            member_highs=member_highs,
+            member_lows=member_lows,
+        )
 
-            _forecast_cache[cache_key] = (now, forecast)
-            logger.info(f"Ensemble forecast for {city['name']} on {target_date}: "
-                        f"High {forecast.mean_high:.1f}F +/- {forecast.std_high:.1f}F "
-                        f"({forecast.num_members} members)")
+        _forecast_cache[cache_key] = (now, forecast)
+        logger.info(f"Ensemble forecast for {city['name']} on {target_date}: "
+                    f"High {forecast.mean_high:.1f}F +/- {forecast.std_high:.1f}F "
+                    f"({forecast.num_members} members)")
 
-            return forecast
+        return forecast
 
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            # Negative-cache the rate limit so we don't hammer the API.
+            _forecast_cache[cache_key] = (now, None)
+            if last_known is not None:
+                logger.warning(f"Open-Meteo 429 for {city_key}; serving stale forecast")
+                return last_known
+            logger.warning(f"Open-Meteo 429 for {city_key}; no stale forecast available")
+            return None
+        logger.warning(f"Failed to fetch ensemble forecast for {city_key}: {e}")
+        return last_known
     except Exception as e:
         logger.warning(f"Failed to fetch ensemble forecast for {city_key}: {e}")
-        return None
+        return last_known
 
 
 async def fetch_nws_observed_temperature(city_key: str, target_date: Optional[date] = None) -> Optional[Dict[str, float]]:
