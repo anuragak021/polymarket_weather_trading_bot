@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     WEATHER_TAKE_PROFIT_PRICE: float = 0.85
     WEATHER_STOP_LOSS_PRICE: float = 0.15
     WEATHER_EXIT_SLIPPAGE: float = 0.02  # Account for slippage/fees
-    WEATHER_CITIES: str = "nyc,chicago,miami,los_angeles,denver,houston,phoenix,philadelphia,san_antonio,san_diego,dallas,austin,san_jose,boston,seattle"
+    WEATHER_CITIES: str = "houston,austin,chicago,dallas,hong_kong,london,denver,lucknow,jakarta,seoul,paris,amsterdam,munich,milan,shanghai,wellington,singapore,tokyo,nyc,toronto,mexico_city,beijing,atlanta,miami,chengdu,moscow,warsaw,jeddah,los_angeles,seattle,shenzhen,buenos_aires,istanbul,madrid,taipei,guangzhou,karachi,chongqing,san_francisco,lagos,wuhan,ankara,tel_aviv,manila,helsinki,kuala_lumpur,busan,sao_paulo,panama_city,cape_town,qingdao"
 
     class Config:
         env_file = ".env"

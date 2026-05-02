@@ -10,25 +10,64 @@ logger = logging.getLogger("trading_bot")
 
 # Map city names/variants found in market titles to our city keys
 CITY_ALIASES = {
+    "houston": "houston",
+    "austin": "austin",
+    "chicago": "chicago",
+    "dallas": "dallas",
+    "hong kong": "hong_kong",
+    "london": "london",
+    "denver": "denver",
+    "lucknow": "lucknow",
+    "jakarta": "jakarta",
+    "seoul": "seoul",
+    "paris": "paris",
+    "amsterdam": "amsterdam",
+    "munich": "munich",
+    "milan": "milan",
+    "shanghai": "shanghai",
+    "wellington": "wellington",
+    "singapore": "singapore",
+    "tokyo": "tokyo",
+    "nyc": "nyc",
+    "toronto": "toronto",
+    "mexico city": "mexico_city",
+    "mexico": "mexico_city",
+    "beijing": "beijing",
+    "atlanta": "atlanta",
+    "miami": "miami",
+    "chengdu": "chengdu",
+    "moscow": "moscow",
+    "warsaw": "warsaw",
+    "jeddah": "jeddah",
+    "los angeles": "los_angeles",
+    "seattle": "seattle",
+    "shenzhen": "shenzhen",
+    "buenos aires": "buenos_aires",
+    "istanbul": "istanbul",
+    "madrid": "madrid",
+    "taipei": "taipei",
+    "guangzhou": "guangzhou",
+    "karachi": "karachi",
+    "chongqing": "chongqing",
+    "san francisco": "san_francisco",
+    "lagos": "lagos",
+    "wuhan": "wuhan",
+    "ankara": "ankara",
+    "tel aviv": "tel_aviv",
+    "manila": "manila",
+    "helsinki": "helsinki",
+    "kuala lumpur": "kuala_lumpur",
+    "busan": "busan",
+    "sao paulo": "sao_paulo",
+    "panama city": "panama_city",
+    "panama": "panama_city",
+    "cape town": "cape_town",
+    "qingdao": "qingdao",
     "new york": "nyc",
     "nyc": "nyc",
     "new york city": "nyc",
-    "chicago": "chicago",
-    "miami": "miami",
-    "los angeles": "los_angeles",
     "la": "los_angeles",
-    "denver": "denver",
-    "houston": "houston",
-    "phoenix": "phoenix",
-    "philadelphia": "philadelphia",
     "philly": "philadelphia",
-    "san antonio": "san_antonio",
-    "san diego": "san_diego",
-    "dallas": "dallas",
-    "austin": "austin",
-    "san jose": "san_jose",
-    "boston": "boston",
-    "seattle": "seattle",
 }
 
 # Month name to number
@@ -196,15 +235,15 @@ async def fetch_polymarket_weather_markets(city_keys: Optional[List[str]] = None
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # Search for weather/temperature events
-            for search_term in ["temperature", "weather high", "weather low"]:
+            # Search for weather/temperature events using tag_slug=weather
+            for tag in ["weather"]:
                 try:
                     response = await client.get(
                         "https://gamma-api.polymarket.com/events",
                         params={
                             "closed": "false",
-                            "limit": 100,
-                            "tag": "Weather",
+                            "limit": 500,
+                            "tag_slug": tag,
                         }
                     )
                     response.raise_for_status()
@@ -218,17 +257,17 @@ async def fetch_polymarket_weather_markets(city_keys: Optional[List[str]] = None
                                 markets.append(market)
 
                 except Exception as e:
-                    logger.debug(f"Weather market search for '{search_term}' failed: {e}")
+                    logger.debug(f"Weather market search for '{tag}' failed: {e}")
 
-            # Also try slug-based search for known patterns
-            for slug_pattern in ["weather", "temperature", "temp-"]:
+            # Also try title search
+            for slug_pattern in ["temperature", "temp"]:
                 try:
                     response = await client.get(
                         "https://gamma-api.polymarket.com/events",
                         params={
                             "closed": "false",
-                            "limit": 100,
-                            "slug_contains": slug_pattern,
+                            "limit": 500,
+                            "title_contains": slug_pattern,
                         }
                     )
                     response.raise_for_status()
