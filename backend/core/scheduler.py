@@ -222,7 +222,10 @@ async def weather_scan_and_trade_job():
 
             MAX_TRADES_PER_SCAN = settings.WEATHER_MAX_OPEN_TRADES
             MIN_TRADE_SIZE = settings.WEATHER_MIN_TRADE_SIZE
-            MAX_WEATHER_ALLOCATION = settings.WEATHER_MAX_ALLOCATION
+            MAX_WEATHER_ALLOCATION = max(
+                settings.WEATHER_MAX_ALLOCATION,
+                state.bankroll * settings.WEATHER_MAX_ALLOCATION_FRACTION,
+            )
 
             # Check weather allocation limit
             weather_pending = db.query(func.coalesce(func.sum(Trade.entry_cost), 0.0)).filter(
@@ -231,7 +234,7 @@ async def weather_scan_and_trade_job():
             ).scalar()
 
             if weather_pending >= MAX_WEATHER_ALLOCATION:
-                log_event("info", f"Weather allocation limit reached: ${weather_pending:.0f}/${MAX_WEATHER_ALLOCATION:.0f}")
+                log_event("info", f"Weather allocation limit reached: ${weather_pending:.2f}/${MAX_WEATHER_ALLOCATION:.2f}")
                 return
 
             trades_executed = 0

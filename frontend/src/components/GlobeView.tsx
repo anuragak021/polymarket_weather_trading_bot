@@ -17,43 +17,36 @@ interface CityMarker {
   hasActionable: boolean
 }
 
-const CITIES: Record<string, { lat: number; lng: number; name: string }> = {
-  nyc: { lat: 40.7128, lng: -74.006, name: 'NYC' },
-  chicago: { lat: 41.8781, lng: -87.6298, name: 'CHI' },
-  miami: { lat: 25.7617, lng: -80.1918, name: 'MIA' },
-  los_angeles: { lat: 34.0522, lng: -118.2437, name: 'LA' },
-  denver: { lat: 39.7392, lng: -104.9903, name: 'DEN' },
-}
-
 export function GlobeView({ forecasts, signals }: Props) {
   const globeRef = useRef<any>(null)
 
   const markers: CityMarker[] = useMemo(() => {
-    return Object.entries(CITIES).map(([key, city]) => {
-      const forecast = forecasts.find(f => f.city_key === key) || null
-      const citySignals = signals.filter(s => s.city_key === key)
-      const actionableSignals = citySignals.filter(s => s.actionable)
-      const bestSignal = actionableSignals.length > 0
-        ? actionableSignals.reduce((a, b) => Math.abs(a.edge) > Math.abs(b.edge) ? a : b)
-        : citySignals.length > 0
-          ? citySignals.reduce((a, b) => Math.abs(a.edge) > Math.abs(b.edge) ? a : b)
-          : null
+    return forecasts
+      .filter(f => f.lat !== null && f.lat !== undefined && f.lon !== null && f.lon !== undefined)
+      .map(forecast => {
+        const citySignals = signals.filter(s => s.city_key === forecast.city_key)
+        const actionableSignals = citySignals.filter(s => s.actionable)
+        const bestSignal = actionableSignals.length > 0
+          ? actionableSignals.reduce((a, b) => Math.abs(a.edge) > Math.abs(b.edge) ? a : b)
+          : citySignals.length > 0
+            ? citySignals.reduce((a, b) => Math.abs(a.edge) > Math.abs(b.edge) ? a : b)
+            : null
 
-      return {
-        lat: city.lat,
-        lng: city.lng,
-        name: city.name,
-        key,
-        forecast,
-        bestSignal,
-        hasActionable: actionableSignals.length > 0,
-      }
-    })
+        return {
+          lat: forecast.lat as number,
+          lng: forecast.lon as number,
+          name: forecast.city_name,
+          key: forecast.city_key,
+          forecast,
+          bestSignal,
+          hasActionable: actionableSignals.length > 0,
+        }
+      })
   }, [forecasts, signals])
 
   useEffect(() => {
     if (globeRef.current) {
-      globeRef.current.pointOfView({ lat: 39.5, lng: -98.35, altitude: 2.2 }, 1000)
+      globeRef.current.pointOfView({ lat: 20, lng: 0, altitude: 2.4 }, 1000)
       globeRef.current.controls().autoRotate = true
       globeRef.current.controls().autoRotateSpeed = 0.3
       globeRef.current.controls().enableZoom = false

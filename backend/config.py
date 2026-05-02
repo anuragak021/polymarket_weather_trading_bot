@@ -85,7 +85,8 @@ class Settings(BaseSettings):
     WEATHER_MAX_TRADE_FRACTION: float = 1.0  # Allow full bankroll per trade
     WEATHER_ALLOW_MIN_SIZE_ROUND_UP: bool = True
     WEATHER_MAX_OPEN_TRADES: int = 10  # More concurrent trades
-    WEATHER_MAX_ALLOCATION: float = 150.0  # Max total allocation
+    WEATHER_MAX_ALLOCATION: float = 150.0  # Floor for max total weather allocation in $
+    WEATHER_MAX_ALLOCATION_FRACTION: float = 0.5  # Fraction of bankroll usable across open weather trades
     WEATHER_TAKE_PROFIT_PRICE: float = 0.85
     WEATHER_STOP_LOSS_PRICE: float = 0.15
     WEATHER_EXIT_SLIPPAGE: float = 0.02  # Account for slippage/fees

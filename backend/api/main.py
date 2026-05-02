@@ -168,6 +168,8 @@ class WeatherForecastResponse(BaseModel):
     std_low: float
     num_members: int
     ensemble_agreement: float
+    lat: Optional[float] = None
+    lon: Optional[float] = None
 
 
 class WeatherMarketResponse(BaseModel):
@@ -768,6 +770,7 @@ async def get_weather_forecasts():
                 continue
             forecast = await fetch_ensemble_forecast(city_key)
             if forecast:
+                city_meta = CITY_CONFIG.get(city_key, {})
                 forecasts.append(WeatherForecastResponse(
                     city_key=forecast.city_key,
                     city_name=forecast.city_name,
@@ -778,6 +781,8 @@ async def get_weather_forecasts():
                     std_low=forecast.std_low,
                     num_members=forecast.num_members,
                     ensemble_agreement=forecast.ensemble_agreement,
+                    lat=city_meta.get("lat"),
+                    lon=city_meta.get("lon"),
                 ))
 
         return forecasts
@@ -1084,6 +1089,7 @@ async def get_dashboard(db: Session = Depends(get_db)):
                     continue
                 forecast = await fetch_ensemble_forecast(city_key)
                 if forecast:
+                    city_meta = CITY_CONFIG.get(city_key, {})
                     weather_forecasts_data.append(WeatherForecastResponse(
                         city_key=forecast.city_key,
                         city_name=forecast.city_name,
@@ -1094,6 +1100,8 @@ async def get_dashboard(db: Session = Depends(get_db)):
                         std_low=forecast.std_low,
                         num_members=forecast.num_members,
                         ensemble_agreement=forecast.ensemble_agreement,
+                        lat=city_meta.get("lat"),
+                        lon=city_meta.get("lon"),
                     ))
         except Exception:
             pass

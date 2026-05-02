@@ -102,6 +102,8 @@ export interface WeatherForecast {
   std_low: number
   num_members: number
   ensemble_agreement: number
+  lat?: number | null
+  lon?: number | null
 }
 
 export interface WeatherSignal {

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from backend.config import settings
 from backend.core.weather_strategy import calculate_mark_to_market_pnl, trade_entry_cost, trade_quantity
 from backend.data.polymarket_prices import fetch_polymarket_market_prices
-from backend.models.database import BotState, Trade
+from backend.models.database import BotState, Signal, Trade
 
 logger = logging.getLogger("trading_bot")
 
@@ -103,6 +103,20 @@ async def manage_open_weather_positions(db: Session) -> List[Trade]:
             state.bankroll += pnl
             if pnl > 0:
                 state.winning_trades += 1
+
+        if trade.signal_id:
+            linked_signal = db.query(Signal).filter(Signal.id == trade.signal_id).first()
+            if linked_signal:
+                position_won = pnl is not None and pnl > 0
+                if trade.direction in ("yes", "up"):
+                    settlement_value = 1.0 if position_won else 0.0
+                else:
+                    settlement_value = 0.0 if position_won else 1.0
+                actual_outcome = "up" if settlement_value == 1.0 else "down"
+                linked_signal.actual_outcome = actual_outcome
+                linked_signal.outcome_correct = position_won
+                linked_signal.settlement_value = settlement_value
+                linked_signal.settled_at = datetime.utcnow()
 
         closed.append(trade)
         logger.info(
