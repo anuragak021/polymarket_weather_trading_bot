@@ -66,22 +66,36 @@ def size_weather_position(
     odds = (1.0 - entry_price) / entry_price
     lose_prob = 1.0 - win_prob
     full_kelly = (win_prob * odds - lose_prob) / odds
-    fractional_kelly = max(0.0, full_kelly * kelly_mult)
 
-    if fractional_kelly <= 0:
+    if full_kelly <= 0:
         return SizedPosition(0.0, 0.0, 0.0, "negative_kelly")
 
+    # House Money Effect (HME) Dynamic Sizing
+    initial_br = settings.INITIAL_BANKROLL
+    base_capital = min(bankroll, initial_br)
+    profit = max(0.0, bankroll - initial_br)
+
+    # Base capital: Safe sizing (1/4 Kelly, max 33% risk - plays safe with ~$2 of the initial $3)
+    base_investment = min(max(0.0, full_kelly * 0.25 * base_capital), base_capital * 0.333)
+
+    # Profit capital: Aggressive sizing (Full Kelly, risk up to 100% of generated profit)
+    profit_investment = min(max(0.0, full_kelly * 1.0 * profit), profit * 1.0)
+
+    desired_cash = base_investment + profit_investment
+
     cap = min(max_size, bankroll * max_fraction, bankroll)
-    cash = min(fractional_kelly * bankroll, cap)
+    cash = min(desired_cash, cap)
+    
+    effective_kelly = (cash / bankroll) / full_kelly if (bankroll > 0 and full_kelly > 0) else 0.0
 
     if cash < min_size:
         if not round_up or bankroll < min_size or cap < min_size:
-            return SizedPosition(0.0, 0.0, fractional_kelly, "below_min_trade_size")
+            return SizedPosition(0.0, 0.0, effective_kelly, "below_min_trade_size")
         cash = min_size
 
     cash = round(max(0.0, min(cash, cap)), 2)
     quantity = round(cash / entry_price, 6)
-    return SizedPosition(cash, quantity, fractional_kelly)
+    return SizedPosition(cash, quantity, effective_kelly)
 
 
 def trade_entry_cost(trade) -> float:
@@ -105,7 +119,8 @@ def calculate_mark_to_market_pnl(trade, exit_price: float) -> float:
     """Calculate realized PnL when selling before resolution."""
     quantity = trade_quantity(trade)
     cost = trade_entry_cost(trade)
-    return round(quantity * exit_price - cost, 4)
+    fee_or_slippage = quantity * exit_price * settings.WEATHER_EXIT_SLIPPAGE
+    return round(quantity * exit_price - cost - fee_or_slippage, 4)
 
 
 def calculate_settlement_pnl_from_cash(trade, settlement_value: float) -> float:
@@ -118,10 +133,11 @@ def calculate_settlement_pnl_from_cash(trade, settlement_value: float) -> float:
 
     quantity = trade_quantity(trade)
     cost = trade_entry_cost(trade)
+    fee_or_slippage = quantity * settings.WEATHER_EXIT_SLIPPAGE if settlement_value == 1.0 else 0.0
 
     position_won = (direction == "yes" and settlement_value == 1.0) or (
         direction == "no" and settlement_value == 0.0
     )
     if position_won:
-        return round(quantity - cost, 4)
+        return round(quantity - cost - fee_or_slippage, 4)
     return round(-cost, 4)

@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     STRATEGY_MODE: str = "weather"  # weather, btc, or all
     SIMULATION_MODE: bool = True
     INITIAL_BANKROLL: float = 3.0
-    KELLY_FRACTION: float = 0.25  # Fractional Kelly
+    KELLY_FRACTION: float = 1.0  # Full Kelly for aggressive growth
 
     # BTC 5-min specific settings
     SCAN_INTERVAL_SECONDS: int = 60  # Scan every minute
@@ -56,8 +56,8 @@ class Settings(BaseSettings):
     MAX_TOTAL_PENDING_TRADES: int = 20
 
     # Risk management
-    DAILY_LOSS_LIMIT: float = 1.50
-    MAX_TRADE_SIZE: float = 75.0
+    DAILY_LOSS_LIMIT: float = 3.00  # Allow full initial bankroll loss
+    MAX_TRADE_SIZE: float = 150.0
     MIN_TIME_REMAINING: int = 60  # Don't trade windows closing in < 60s
     MAX_TIME_REMAINING: int = 1800  # Trade windows up to 30min out
 
@@ -74,22 +74,22 @@ class Settings(BaseSettings):
     # Weather trading settings
     WEATHER_ENABLED: bool = True
     WEATHER_POLYMARKET_ONLY: bool = True
-    WEATHER_SCAN_INTERVAL_SECONDS: int = 300  # 5 min
+    WEATHER_SCAN_INTERVAL_SECONDS: int = 120  # 2 min (scan faster)
     WEATHER_SETTLEMENT_INTERVAL_SECONDS: int = 1800  # 30 min
     WEATHER_EXIT_CHECK_INTERVAL_SECONDS: int = 60
-    WEATHER_MIN_EDGE_THRESHOLD: float = 0.10  # 10pp edge from strat3.md
-    WEATHER_MIN_ENTRY_PRICE: float = 0.40
-    WEATHER_MAX_ENTRY_PRICE: float = 0.60
+    WEATHER_MIN_EDGE_THRESHOLD: float = 0.03  # Lower edge threshold to take more trades
+    WEATHER_MIN_ENTRY_PRICE: float = 0.10  # Broaden entry prices
+    WEATHER_MAX_ENTRY_PRICE: float = 0.90
     WEATHER_MIN_TRADE_SIZE: float = 0.50
-    WEATHER_MAX_TRADE_SIZE: float = 0.50
-    WEATHER_MAX_TRADE_FRACTION: float = 0.20
+    WEATHER_MAX_TRADE_SIZE: float = 150.0  # Allow large trades
+    WEATHER_MAX_TRADE_FRACTION: float = 1.0  # Allow full bankroll per trade
     WEATHER_ALLOW_MIN_SIZE_ROUND_UP: bool = True
-    WEATHER_MAX_OPEN_TRADES: int = 4
-    WEATHER_MAX_ALLOCATION: float = 3.0
-    WEATHER_TAKE_PROFIT_PRICE: float = 0.75
-    WEATHER_STOP_LOSS_PRICE: float = 0.35
-    WEATHER_EXIT_SLIPPAGE: float = 0.01
-    WEATHER_CITIES: str = "nyc,chicago,miami,los_angeles,denver"
+    WEATHER_MAX_OPEN_TRADES: int = 10  # More concurrent trades
+    WEATHER_MAX_ALLOCATION: float = 150.0  # Max total allocation
+    WEATHER_TAKE_PROFIT_PRICE: float = 0.85
+    WEATHER_STOP_LOSS_PRICE: float = 0.15
+    WEATHER_EXIT_SLIPPAGE: float = 0.02  # Account for slippage/fees
+    WEATHER_CITIES: str = "nyc,chicago,miami,los_angeles,denver,houston,phoenix,philadelphia,san_antonio,san_diego,dallas,austin,san_jose,boston,seattle"
 
     class Config:
         env_file = ".env"

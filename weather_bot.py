@@ -33,7 +33,7 @@ class BacktestConfig:
     max_entry_price: float = 0.60
     min_trade_size: float = 0.50
     max_trade_size: float = 0.50
-    max_trade_fraction: float = 0.20
+    max_trade_fraction: float = 1.0
     allow_min_size_round_up: bool = True
     take_profit_price: float = 0.75
     stop_loss_price: float = 0.35
@@ -119,51 +119,47 @@ def generate_demo_history(days: int = 240, seed: int = 7) -> pd.DataFrame:
     and sensitivity machinery can be reproduced before real tick data exists.
     """
     rng = np.random.default_rng(seed)
-    cities = ["nyc", "chicago", "miami", "los_angeles", "denver"]
+    cities = ["nyc", "chicago", "miami", "los_angeles", "denver", "houston", "phoenix", "philadelphia", "san_antonio", "san_diego", "dallas", "austin", "san_jose", "boston", "seattle"]
     start = date.today() - timedelta(days=days)
     rows: List[dict] = []
 
-    city_base = {
-        "nyc": 70,
-        "chicago": 66,
-        "miami": 84,
-        "los_angeles": 73,
-        "denver": 68,
-    }
+    city_base = {c: 70 for c in cities}
+    metrics = ["high", "low", "range"]
 
     for day_idx in range(days):
         current_date = start + timedelta(days=day_idx)
         seasonal = 14 * math.sin(2 * math.pi * day_idx / 365)
         for city in cities:
-            true_mean = city_base[city] + seasonal + rng.normal(0, 4.0)
-            threshold = round(true_mean + rng.normal(0, 3.5))
-            settlement_value = 1.0 if true_mean + rng.normal(0, 2.0) > threshold else 0.0
+            for metric in metrics:
+                true_mean = city_base[city] + seasonal + rng.normal(0, 4.0)
+                threshold = round(true_mean + rng.normal(0, 3.5))
+                settlement_value = 1.0 if true_mean + rng.normal(0, 2.0) > threshold else 0.0
 
-            latent_prob = _normal_cdf((true_mean - threshold) / 4.5)
-            model_yes_prob = _clip(latent_prob + rng.normal(0, 0.060), 0.03, 0.97)
-            market_yes_price = _clip(latent_prob + rng.normal(0, 0.090), 0.05, 0.95)
+                latent_prob = _normal_cdf((true_mean - threshold) / 4.5)
+                model_yes_prob = _clip(latent_prob + rng.normal(0, 0.060), 0.03, 0.97)
+                market_yes_price = _clip(latent_prob + rng.normal(0, 0.090), 0.05, 0.95)
 
-            max_price = _clip(market_yes_price + rng.uniform(0.02, 0.22), 0.01, 0.99)
-            min_price = _clip(market_yes_price - rng.uniform(0.02, 0.22), 0.01, 0.99)
-            regime = "high" if rng.random() < 0.18 else "normal"
+                max_price = _clip(market_yes_price + rng.uniform(0.02, 0.22), 0.01, 0.99)
+                min_price = _clip(market_yes_price - rng.uniform(0.02, 0.22), 0.01, 0.99)
+                regime = "high" if rng.random() < 0.18 else "normal"
 
-            rows.append({
-                "date": current_date,
-                "market_id": f"demo_{city}_{current_date.isoformat()}",
-                "city": city,
-                "metric": "high",
-                "direction": "above",
-                "threshold_f": threshold,
-                "model_yes_prob": round(model_yes_prob, 4),
-                "market_yes_price": round(market_yes_price, 4),
-                "max_yes_price_after_entry": round(max_price, 4),
-                "min_yes_price_after_entry": round(min_price, 4),
-                "settlement_value": settlement_value,
-                "regime_uncertainty": regime,
-                "prob_arima": round(_clip(latent_prob + rng.normal(0, 0.13), 0.03, 0.97), 4),
-                "prob_xgboost": round(_clip(latent_prob + rng.normal(0, 0.10), 0.03, 0.97), 4),
-                "prob_ensemble": round(_clip(latent_prob + rng.normal(0, 0.085), 0.03, 0.97), 4),
-            })
+                rows.append({
+                    "date": current_date,
+                    "market_id": f"demo_{city}_{metric}_{current_date.isoformat()}",
+                    "city": city,
+                    "metric": metric,
+                    "direction": "above",
+                    "threshold_f": threshold,
+                    "model_yes_prob": round(model_yes_prob, 4),
+                    "market_yes_price": round(market_yes_price, 4),
+                    "max_yes_price_after_entry": round(max_price, 4),
+                    "min_yes_price_after_entry": round(min_price, 4),
+                    "settlement_value": settlement_value,
+                    "regime_uncertainty": regime,
+                    "prob_arima": round(_clip(latent_prob + rng.normal(0, 0.13), 0.03, 0.97), 4),
+                    "prob_xgboost": round(_clip(latent_prob + rng.normal(0, 0.10), 0.03, 0.97), 4),
+                    "prob_ensemble": round(_clip(latent_prob + rng.normal(0, 0.085), 0.03, 0.97), 4),
+                })
 
     return pd.DataFrame(rows)
 
