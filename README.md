@@ -265,3 +265,5 @@ This is a **simulation tool** for educational purposes. It does not place real t
 ## License
 
 MIT - do whatever you want with it.
+
+**1st Commit/Cloned from https://github.com/zostaff/weather-predict-bot**
