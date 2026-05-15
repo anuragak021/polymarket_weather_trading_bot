@@ -30,49 +30,49 @@ Scans Polymarket BTC 5-minute Up/Down markets every 60 seconds. Fetches real-tim
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph FE["Frontend — React 18 + TypeScript + Tailwind"]
-        direction LR
+flowchart TD
+    subgraph FE["Frontend — React 18 · TypeScript · Tailwind"]
         Globe["3D Globe View"]
-        Weather["Weather Panel"]
-        Signals["Signals Table"]
-        Trades["Trades Table"]
-        Equity["Equity Chart"]
-        Terminal["Terminal / Controls"]
+        WeatherP["Weather Panel"]
+        SigTable["Signals Table"]
+        TradeTable["Trades Table"]
+        EqChart["Equity Chart"]
+        Term["Terminal / Controls"]
     end
 
-    subgraph BE["Backend — FastAPI + Python + SQLite + APScheduler"]
-        direction LR
+    subgraph BE["Backend — FastAPI · Python · SQLite · APScheduler"]
+        Sched["Scan Scheduler"]
         BTCSig["BTC Signal Engine"]
-        WeatherSig["Weather Signal Engine"]
-        Scheduler["Scan Scheduler"]
-        Settlement["Settlement Engine"]
+        WSig["Weather Signal Engine"]
+        Settle["Settlement Engine"]
         PosMgr["Position Manager"]
-        Analytics["Calibration / Analytics"]
+        Cal["Calibration / Analytics"]
+
+        Sched --> BTCSig
+        Sched --> WSig
+        PosMgr --> Settle
+        BTCSig --> Cal
+        WSig --> Cal
     end
 
     subgraph DS["Data Sources — all free-tier"]
-        direction LR
-        Crypto["Coinbase / Kraken / Binance\n1-min BTC candles"]
+        Coinbase["Coinbase / Kraken / Binance\n1-min BTC candles"]
         OpenMeteo["Open-Meteo\nGFS 31-member Ensemble"]
         NWS["NWS API\nObserved Temperatures"]
-        PM["Polymarket\nGamma API"]
-        Kalshi["Kalshi API\nKXHIGH series\n(optional)"]
+        PM["Polymarket Gamma API"]
+        Kalshi["Kalshi API — KXHIGH\n(optional)"]
     end
 
-    FE -->|"HTTP + WebSocket"| BE
-    Scheduler --> BTCSig
-    Scheduler --> WeatherSig
-    BTCSig --> Crypto
-    WeatherSig --> OpenMeteo
-    WeatherSig --> NWS
-    WeatherSig --> PM
-    WeatherSig --> Kalshi
-    BTCSig --> PM
-    Settlement --> PM
-    Settlement --> NWS
-    PosMgr --> Settlement
-    Analytics --> BE
+    FE <-->|"HTTP + WebSocket"| BE
+
+    BTCSig -->|prices| Coinbase
+    BTCSig -->|markets| PM
+    WSig -->|ensemble| OpenMeteo
+    WSig -->|observations| NWS
+    WSig -->|markets| PM
+    WSig -->|markets| Kalshi
+    Settle -->|resolution| PM
+    Settle -->|observations| NWS
 ```
 
 ---
