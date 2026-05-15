@@ -4,7 +4,10 @@ An automated trading bot that finds pricing inefficiencies in prediction markets
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue) ![React](https://img.shields.io/badge/react-18+-61DAFB) ![TypeScript](https://img.shields.io/badge/typescript-5.0+-blue) ![FastAPI](https://img.shields.io/badge/fastapi-0.109+-green) ![License](https://img.shields.io/badge/license-MIT-green)
 
-![Dashboard](docs/dashboard.png)
+<!-- Dashboard screenshot will go here -->
+<!-- ![Dashboard](docs/dashboard.png) -->
+
+> *Screenshot above: paper trading session — no real money was used.*
 
 **100% free to run** — no paid APIs, no subscriptions required. All data sources are free-tier. Kalshi API key is optional.
 
@@ -26,35 +29,50 @@ Scans Polymarket BTC 5-minute Up/Down markets every 60 seconds. Fetches real-tim
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        FRONTEND                             │
-│   React 18 + TypeScript + TanStack Query + Tailwind CSS     │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
-│  │  Globe   │ │ Weather  │ │  Signals │ │  Trades  │       │
-│  │  View    │ │  Panel   │ │  Table   │ │  Table   │       │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
-└─────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                        BACKEND                              │
-│        FastAPI + Python + SQLite + APScheduler              │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
-│  │  BTC     │ │ Weather  │ │ Signal   │ │Settlement│       │
-│  │ Signals  │ │ Signals  │ │Scheduler │ │ Engine   │       │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
-└─────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      DATA SOURCES                           │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
-│  │Coinbase/ │ │Open-Meteo│ │ NWS API  │ │Polymarket│       │
-│  │ Kraken / │ │  GFS 31  │ │ Observed │ │  Gamma   │       │
-│  │ Binance  │ │ Ensemble │ │   Temps  │ │   API    │       │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph FE["Frontend — React 18 + TypeScript + Tailwind"]
+        direction LR
+        Globe["3D Globe View"]
+        Weather["Weather Panel"]
+        Signals["Signals Table"]
+        Trades["Trades Table"]
+        Equity["Equity Chart"]
+        Terminal["Terminal / Controls"]
+    end
+
+    subgraph BE["Backend — FastAPI + Python + SQLite + APScheduler"]
+        direction LR
+        BTCSig["BTC Signal Engine"]
+        WeatherSig["Weather Signal Engine"]
+        Scheduler["Scan Scheduler"]
+        Settlement["Settlement Engine"]
+        PosMgr["Position Manager"]
+        Analytics["Calibration / Analytics"]
+    end
+
+    subgraph DS["Data Sources — all free-tier"]
+        direction LR
+        Crypto["Coinbase / Kraken / Binance\n1-min BTC candles"]
+        OpenMeteo["Open-Meteo\nGFS 31-member Ensemble"]
+        NWS["NWS API\nObserved Temperatures"]
+        PM["Polymarket\nGamma API"]
+        Kalshi["Kalshi API\nKXHIGH series\n(optional)"]
+    end
+
+    FE -->|"HTTP + WebSocket"| BE
+    Scheduler --> BTCSig
+    Scheduler --> WeatherSig
+    BTCSig --> Crypto
+    WeatherSig --> OpenMeteo
+    WeatherSig --> NWS
+    WeatherSig --> PM
+    WeatherSig --> Kalshi
+    BTCSig --> PM
+    Settlement --> PM
+    Settlement --> NWS
+    PosMgr --> Settlement
+    Analytics --> BE
 ```
 
 ---
