@@ -2,7 +2,7 @@
 
 An automated trading bot that finds pricing inefficiencies in prediction markets by combining **ensemble weather forecasting** with **BTC microstructure analysis**. Trades weather temperature markets on **Polymarket** and **Kalshi**, with a live React dashboard.
 
-![Python](https://img.shields.io/badge/python-3.10+-blue) ![React](https://img.shields.io/badge/react-18+-61DAFB) ![TypeScript](https://img.shields.io/badge/typescript-5.0+-blue) ![FastAPI](https://img.shields.io/badge/fastapi-0.109+-green) ![License](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/python-3.10+-blue) ![React](https://img.shields.io/badge/react-18+-61DAFB) ![TypeScript](https://img.shields.io/badge/typescript-5.0+-blue) ![FastAPI](https://img.shields.io/badge/fastapi-0.109+-green) ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 
 <!-- Dashboard screenshot will go here -->
 <!-- ![Dashboard](docs/dashboard.png) -->
@@ -355,4 +355,6 @@ The `frontend/vercel.json` is pre-configured for Vite. Set `VITE_BACKEND_URL` to
 
 ## License
 
-MIT — do whatever you want with it.
+Licensed under the **Apache License 2.0**.
+
+You are free to use, modify, and distribute this code — including the trading strategies and signal logic — but you **must** give appropriate credit to the original author, include the license notice, and state any changes you made. See [`LICENSE`](LICENSE) for the full terms.
